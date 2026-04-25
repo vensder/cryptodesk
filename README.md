@@ -59,7 +59,7 @@ npm run dev
 - [x] Candlestick chart via lightweight-charts
 
 ### Phase 2
-- [ ] Volume histogram series below candles
+- [x] Volume histogram series below candles
 - [ ] Auto-refresh on a configurable interval
 - [ ] Persist last-used exchange/symbol/interval
 
@@ -78,3 +78,15 @@ OKX multi-collateral loan endpoints to use:
 - `GET /api/v5/account/positions` - collateral positions
 
 Auth requires API key + secret + passphrase, signed with HMAC-SHA256.
+
+
+### Appendix
+
+Use nvm to manage npm
+
+```sh
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+nvm install --lts --latest-npm
+nvm use --lts
+nvm alias default 'lts/*'
+```

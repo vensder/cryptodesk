@@ -24,6 +24,7 @@ interface Candle {
   high:  number;
   low:   number;
   close: number;
+  volume: number;
 }
 
 interface Exchange {
@@ -52,6 +53,7 @@ const exchanges: Record<string, Exchange> = {
         high:  parseFloat(k[2] as string),
         low:   parseFloat(k[3] as string),
         close: parseFloat(k[4] as string),
+        volume: parseFloat(k[5] as string),
       }));
     },
   },
@@ -76,6 +78,7 @@ const exchanges: Record<string, Exchange> = {
           high:  parseFloat(k[2]),
           low:   parseFloat(k[3]),
           close: parseFloat(k[4]),
+          volume: parseFloat(k[5]),
         }))
         .reverse();
     },
@@ -98,6 +101,7 @@ function normalizeOkxSymbol(s: string): string {
 
 let chart:        LWC.IChartApi | null = null;
 let candleSeries: LWC.ISeriesApi<'Candlestick'> | null = null;
+let volumeSeries: LWC.ISeriesApi<'Histogram'> | null = null;
 
 function initChart(): void {
   const container = document.getElementById('chart-container') as HTMLDivElement;
@@ -139,6 +143,16 @@ function initChart(): void {
     wickDownColor:   '#ef5350',
   });
 
+  volumeSeries = chart.addHistogramSeries({
+    color:              '#26a69a',
+    priceFormat:        { type: 'volume' },
+    priceScaleId:       'vol',
+  });
+  
+  chart.priceScale('vol').applyOptions({
+    scaleMargins: { top: 0.8, bottom: 0 },  // bottom 20% of the pane
+  });
+
   const ro = new ResizeObserver(() => {
     chart!.resize(container.clientWidth, container.clientHeight);
   });
@@ -171,7 +185,20 @@ async function loadCandles(): Promise<void> {
     if (!adapter) throw new Error(`Unknown exchange: ${exchange}`);
 
     const candles = await adapter.fetchKlines(symbol, interval);
-    candleSeries!.setData(candles as LWC.CandlestickData[]);
+    candleSeries!.setData(candles.map(c => ({
+      time:  c.time as LWC.UTCTimestamp,
+      open:  c.open,
+      high:  c.high,
+      low:   c.low,
+      close: c.close,
+    })));
+
+    volumeSeries!.setData(candles.map(c => ({
+      time:  c.time as LWC.UTCTimestamp,
+      value: c.volume,
+      color: c.close >= c.open ? '#26a69a55' : '#ef535055',
+    })));
+
     chart!.timeScale().fitContent();
     setStatus(`${candles.length} candles  -  ${exchange.toUpperCase()}  ${symbol.toUpperCase()}  ${interval}`, 'ok');
   } catch (err) {
