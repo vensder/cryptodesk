@@ -19,11 +19,11 @@ declare global {
 type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
 interface Candle {
-  time:  number;
-  open:  number;
-  high:  number;
-  low:   number;
-  close: number;
+  time:   number;
+  open:   number;
+  high:   number;
+  low:    number;
+  close:  number;
   volume: number;
 }
 
@@ -31,6 +31,11 @@ interface Exchange {
   intervalMap: Record<string, string>;
   fetchKlines(symbol: string, interval: Interval, limit?: number): Promise<Candle[]>;
 }
+
+// ---- Constants -----------------------------------------------------
+
+const REFRESH_INTERVAL_MS = 15_000;
+const MAX_ERRORS          = 3;
 
 // ---- Exchange adapters ----------------------------------------
 
@@ -48,11 +53,11 @@ const exchanges: Record<string, Exchange> = {
       if (!res.ok) throw new Error(`Binance ${res.status}: ${res.statusText}`);
       const raw = await res.json() as unknown[][];
       return raw.map(k => ({
-        time:  Math.floor((k[0] as number) / 1000),
-        open:  parseFloat(k[1] as string),
-        high:  parseFloat(k[2] as string),
-        low:   parseFloat(k[3] as string),
-        close: parseFloat(k[4] as string),
+        time:   Math.floor((k[0] as number) / 1000),
+        open:   parseFloat(k[1] as string),
+        high:   parseFloat(k[2] as string),
+        low:    parseFloat(k[3] as string),
+        close:  parseFloat(k[4] as string),
         volume: parseFloat(k[5] as string),
       }));
     },
@@ -73,11 +78,11 @@ const exchanges: Record<string, Exchange> = {
       if (json.code !== '0') throw new Error(`OKX API error: ${json.msg}`);
       return json.data
         .map(k => ({
-          time:  Math.floor(parseInt(k[0], 10) / 1000),
-          open:  parseFloat(k[1]),
-          high:  parseFloat(k[2]),
-          low:   parseFloat(k[3]),
-          close: parseFloat(k[4]),
+          time:   Math.floor(parseInt(k[0], 10) / 1000),
+          open:   parseFloat(k[1]),
+          high:   parseFloat(k[2]),
+          low:    parseFloat(k[3]),
+          close:  parseFloat(k[4]),
           volume: parseFloat(k[5]),
         }))
         .reverse();
@@ -97,11 +102,18 @@ function normalizeOkxSymbol(s: string): string {
   return s.toUpperCase();
 }
 
-// ---- Chart setup -----------------------------------------------
+// ---- Chart state -----------------------------------------------
 
 let chart:        LWC.IChartApi | null = null;
 let candleSeries: LWC.ISeriesApi<'Candlestick'> | null = null;
 let volumeSeries: LWC.ISeriesApi<'Histogram'> | null = null;
+
+let refreshTimer:     ReturnType<typeof setInterval> | null = null;
+let consecutiveErrors = 0;
+let statusBase        = '';
+let liveDot:          HTMLSpanElement | null = null;
+
+// ---- Chart setup -----------------------------------------------
 
 function initChart(): void {
   const container = document.getElementById('chart-container') as HTMLDivElement;
@@ -144,13 +156,13 @@ function initChart(): void {
   });
 
   volumeSeries = chart.addHistogramSeries({
-    color:              '#26a69a',
-    priceFormat:        { type: 'volume' },
-    priceScaleId:       'vol',
+    color:        '#26a69a',
+    priceFormat:  { type: 'volume' },
+    priceScaleId: 'vol',
   });
-  
+
   chart.priceScale('vol').applyOptions({
-    scaleMargins: { top: 0.8, bottom: 0 },  // bottom 20% of the pane
+    scaleMargins: { top: 0.8, bottom: 0 },
   });
 
   const ro = new ResizeObserver(() => {
@@ -167,9 +179,79 @@ function setStatus(msg: string, type = ''): void {
   el.className   = type;
 }
 
+// ---- Live indicator --------------------------------------------
+
+function createLiveDot(): void {
+  liveDot = document.createElement('span');
+  liveDot.id = 'live-dot';
+  liveDot.hidden = true;
+  document.getElementById('status-msg')!.insertAdjacentElement('afterend', liveDot);
+}
+
+function setLiveIndicator(active: boolean): void {
+  if (liveDot) liveDot.hidden = !active;
+}
+
+// ---- Auto-refresh ----------------------------------------------
+
+function formatTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function stopRefresh(): void {
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  setLiveIndicator(false);
+}
+
+function startRefresh(exchange: string, symbol: string, interval: Interval): void {
+  stopRefresh();
+  consecutiveErrors = 0;
+  setLiveIndicator(true);
+
+  refreshTimer = setInterval(() => {
+    void (async () => {
+      const adapter = exchanges[exchange];
+      if (!adapter) return;
+
+      try {
+        const latest = await adapter.fetchKlines(symbol, interval, 1);
+        const c = latest[0];
+        if (!c) return;
+        candleSeries!.update({
+          time:  c.time as LWC.UTCTimestamp,
+          open:  c.open,
+          high:  c.high,
+          low:   c.low,
+          close: c.close,
+        });
+        volumeSeries!.update({
+          time:  c.time as LWC.UTCTimestamp,
+          value: c.volume,
+          color: c.close >= c.open ? '#26a69a55' : '#ef535055',
+        });
+        consecutiveErrors = 0;
+        setStatus(`${statusBase} · ${formatTime(new Date())}`, 'ok');
+      } catch (err) {
+        consecutiveErrors++;
+        console.error(`Auto-refresh error (${consecutiveErrors}/${MAX_ERRORS}):`, err);
+        if (consecutiveErrors >= MAX_ERRORS) {
+          stopRefresh();
+          setStatus(`${statusBase} · refresh stopped`, 'error');
+        }
+      }
+    })();
+  }, REFRESH_INTERVAL_MS);
+}
+
 // ---- Load candles ----------------------------------------------
 
 async function loadCandles(): Promise<void> {
+  stopRefresh();
+
   const exchange = (document.getElementById('sel-exchange') as HTMLSelectElement).value;
   const symbol   = (document.getElementById('inp-symbol')   as HTMLInputElement).value.trim();
   const interval = (document.getElementById('sel-interval') as HTMLSelectElement).value as Interval;
@@ -200,7 +282,10 @@ async function loadCandles(): Promise<void> {
     })));
 
     chart!.timeScale().fitContent();
-    setStatus(`${candles.length} candles  -  ${exchange.toUpperCase()}  ${symbol.toUpperCase()}  ${interval}`, 'ok');
+
+    statusBase = `${candles.length} candles  -  ${exchange.toUpperCase()}  ${symbol.toUpperCase()}  ${interval}`;
+    setStatus(statusBase, 'ok');
+    startRefresh(exchange, symbol, interval);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(err);
@@ -244,6 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initChart();
   initTabs();
   initWindowControls();
+  createLiveDot();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });
   (document.getElementById('inp-symbol') as HTMLInputElement).addEventListener('keydown', e => {

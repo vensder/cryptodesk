@@ -191,6 +191,23 @@ option { background: var(--bg-elevated); }
 #status-msg.error { color: var(--red); }
 #status-msg.ok    { color: var(--green); }
 
+#live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 8px;
+  vertical-align: middle;
+  animation: blink-dot 1s step-start infinite;
+}
+#live-dot[hidden] { display: none; }
+
+@keyframes blink-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
 /* ---- Chart ---- */
 #chart-container {
   flex: 1;
