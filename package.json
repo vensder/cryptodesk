@@ -1,0 +1,19 @@
+{
+  "name": "cryptodesk",
+  "version": "0.1.0",
+  "description": "Crypto charts and loan management desktop app",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
+    "start": "npm run build && electron . --no-sandbox",
+    "dev":   "npm run build && electron . --no-sandbox --dev"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "electron": "^31.0.0",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "lightweight-charts": "^4.2.0"
+  }
+}

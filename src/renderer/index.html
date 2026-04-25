@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoDesk</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Custom titlebar (frameless window) -->
+  <div id="titlebar">
+    <div id="titlebar-drag">
+      <span id="app-name">CRYPTODESK</span>
+    </div>
+    <div id="titlebar-controls">
+      <button id="btn-min" title="Minimize">&#8211;</button>
+      <button id="btn-max" title="Maximize">&#9633;</button>
+      <button id="btn-close" title="Close">&#10005;</button>
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <nav id="tabs">
+    <button class="tab active" data-tab="charts">Charts</button>
+    <button class="tab" data-tab="loans">OKX Loans</button>
+  </nav>
+
+  <!-- Charts tab -->
+  <div id="tab-charts" class="tab-content active">
+
+    <div id="toolbar">
+      <div class="toolbar-group">
+        <label>Exchange</label>
+        <select id="sel-exchange">
+          <option value="binance">Binance</option>
+          <option value="okx">OKX</option>
+        </select>
+      </div>
+      <div class="toolbar-group">
+        <label>Symbol</label>
+        <input id="inp-symbol" type="text" value="BTCUSDT" spellcheck="false" />
+      </div>
+      <div class="toolbar-group">
+        <label>Interval</label>
+        <select id="sel-interval">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
+          <option value="15m">15m</option>
+          <option value="1h" selected>1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </div>
+      <button id="btn-load">Load</button>
+      <span id="status-msg"></span>
+    </div>
+
+    <div id="chart-container"></div>
+
+  </div>
+
+  <!-- Loans tab (placeholder) -->
+  <div id="tab-loans" class="tab-content">
+    <div id="loans-placeholder">
+      <div class="placeholder-icon">&#9889;</div>
+      <h2>OKX Loan Management</h2>
+      <p>Multi-collateral loan dashboard — coming soon.</p>
+      <p class="placeholder-sub">Will include: active loans, collateral ratio, top-up / repay actions.</p>
+    </div>
+  </div>
+
+  <!-- Bundle lightweight-charts from CDN, then app logic -->
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
