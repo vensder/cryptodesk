@@ -1,6 +1,7 @@
 'use strict';
 
 import type * as LWC from 'lightweight-charts';
+import type { OkxLoan, OkxRiskWarning, OkxResponse } from './types';
 
 declare const LightweightCharts: typeof LWC;
 
@@ -12,6 +13,7 @@ declare global {
       windowClose:    () => void;
       getApiKey: (service: string) => Promise<string | null>;
       setApiKey: (service: string, key: string) => Promise<void>;
+      okxRequest: (method: string, path: string, params?: Record<string, string>) => Promise<OkxResponse>;
     };
   }
 }
@@ -36,9 +38,10 @@ interface Exchange {
 
 // ---- Constants -----------------------------------------------------
 
-const REFRESH_INTERVAL_MS = 15_000;
-const MAX_ERRORS          = 3;
-const CMC_REFRESH_MS      = 15 * 60 * 1000;
+const REFRESH_INTERVAL_MS  = 15_000;
+const MAX_ERRORS           = 3;
+const CMC_REFRESH_MS       = 15 * 60 * 1000;
+const LOANS_REFRESH_MS     = 60_000;
 
 // ---- Exchange adapters ----------------------------------------
 
@@ -115,6 +118,10 @@ let refreshTimer:     ReturnType<typeof setInterval> | null = null;
 let consecutiveErrors = 0;
 let statusBase        = '';
 let liveDot:          HTMLSpanElement | null = null;
+
+// ---- Loans state -----------------------------------------------
+
+let loansRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---- Chart setup -----------------------------------------------
 
@@ -298,6 +305,212 @@ async function loadCandles(): Promise<void> {
   }
 }
 
+// ---- Loans tab -------------------------------------------------
+
+function setLoanMetrics(borrowed: string, collateral: string, count: string): void {
+  (document.getElementById('val-total-borrowed')   as HTMLSpanElement).textContent = borrowed;
+  (document.getElementById('val-total-collateral') as HTMLSpanElement).textContent = collateral;
+  (document.getElementById('val-active-loans')     as HTMLSpanElement).textContent = count;
+}
+
+function formatUsd(v: number): string {
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPct(v: string): string {
+  const n = parseFloat(v);
+  return isNaN(n) ? '--' : `${(n * 100).toFixed(1)}%`;
+}
+
+function ltvColor(cur: string, liq: string): string {
+  const c = parseFloat(cur);
+  const l = parseFloat(liq);
+  if (!l || !c) return 'var(--text-primary)';
+  const ratio = c / l;
+  if (ratio < 0.70) return 'var(--green)';
+  if (ratio < 0.85) return 'var(--orange)';
+  return 'var(--red)';
+}
+
+function makeCell(label: string): HTMLDivElement {
+  const cell = document.createElement('div');
+  cell.className = 'loan-cell';
+  const lbl = document.createElement('span');
+  lbl.className = 'cell-label';
+  lbl.textContent = label;
+  cell.appendChild(lbl);
+  return cell;
+}
+
+function makeLoanListCell(
+  label: string,
+  items: Array<{ amt: string; ccy: string }>,
+  usd: string,
+): HTMLDivElement {
+  const cell = makeCell(label);
+  const list = document.createElement('div');
+  list.className = 'cell-list';
+  if (items.length === 0) {
+    const s = document.createElement('span');
+    s.textContent = '--';
+    list.appendChild(s);
+  } else {
+    for (const item of items) {
+      const s = document.createElement('span');
+      s.textContent = `${item.amt} ${item.ccy}`;
+      list.appendChild(s);
+    }
+  }
+  cell.appendChild(list);
+  const usdEl = document.createElement('span');
+  usdEl.className = 'cell-usd';
+  usdEl.textContent = `≈ ${formatUsd(parseFloat(usd) || 0)}`;
+  cell.appendChild(usdEl);
+  return cell;
+}
+
+function makeValueCell(label: string, value: string, color: string): HTMLDivElement {
+  const cell = makeCell(label);
+  const val = document.createElement('span');
+  val.className = 'cell-value';
+  val.textContent = value;
+  val.style.color = color;
+  cell.appendChild(val);
+  return cell;
+}
+
+function makeLiqPriceCell(risk: OkxRiskWarning | undefined): HTMLDivElement {
+  const cell = makeCell('Liq Price');
+  const val = document.createElement('span');
+  val.className = 'cell-value';
+  if (risk?.liqPx) {
+    val.textContent = `${risk.liqPx}${risk.instId ? ' ' + risk.instId : ''}`;
+    cell.appendChild(val);
+  } else {
+    val.textContent = '--';
+    const sub = document.createElement('span');
+    sub.className = 'cell-sub';
+    sub.textContent = 'multi-collateral';
+    cell.appendChild(val);
+    cell.appendChild(sub);
+  }
+  return cell;
+}
+
+function buildLoanCard(loan: OkxLoan): HTMLDivElement {
+  const card = document.createElement('div');
+  card.className = 'loan-card';
+
+  const header = document.createElement('div');
+  header.className = 'loan-card-header';
+  const idEl = document.createElement('span');
+  idEl.className = 'loan-id';
+  idEl.title = loan.ordId;
+  idEl.textContent = `…${loan.ordId.slice(-8)}`;
+  header.appendChild(idEl);
+  card.appendChild(header);
+
+  const grid = document.createElement('div');
+  grid.className = 'loan-card-grid';
+  grid.appendChild(makeLoanListCell('Borrowed',   loan.loanData,       loan.loanNotionalUsd));
+  grid.appendChild(makeLoanListCell('Collateral', loan.collateralData, loan.collateralNotionalUsd));
+  grid.appendChild(makeValueCell('Current LTV',  formatPct(loan.curLTV),        ltvColor(loan.curLTV, loan.liqLTV)));
+  grid.appendChild(makeValueCell('Margin Call',  formatPct(loan.marginCallLTV), 'var(--text-muted)'));
+  grid.appendChild(makeValueCell('Liq LTV',      formatPct(loan.liqLTV),        'var(--text-muted)'));
+  grid.appendChild(makeLiqPriceCell(loan.riskWarningData));
+  card.appendChild(grid);
+
+  return card;
+}
+
+function renderLoanCards(loans: OkxLoan[]): void {
+  const container = document.getElementById('loans-list') as HTMLDivElement;
+  container.innerHTML = '';
+  if (loans.length === 0) {
+    container.textContent = 'No active loans';
+    return;
+  }
+  for (const loan of loans) container.appendChild(buildLoanCard(loan));
+}
+
+function stopLoansRefresh(): void {
+  if (loansRefreshTimer !== null) {
+    clearInterval(loansRefreshTimer);
+    loansRefreshTimer = null;
+  }
+}
+
+function startLoansRefresh(): void {
+  stopLoansRefresh();
+  loansRefreshTimer = setInterval(() => { void fetchLoanSummary(); }, LOANS_REFRESH_MS);
+}
+
+async function fetchLoanSummary(): Promise<void> {
+  let hasKeys = false;
+  try {
+    const [k, s, p] = await Promise.all([
+      window.electronAPI.getApiKey('okx-key'),
+      window.electronAPI.getApiKey('okx-secret'),
+      window.electronAPI.getApiKey('okx-passphrase'),
+    ]);
+    hasKeys = !!(k && s && p);
+  } catch { /* keytar unavailable */ }
+
+  const noKeysEl = document.getElementById('loans-no-keys') as HTMLDivElement;
+  const mainEl   = document.getElementById('loans-main')    as HTMLDivElement;
+
+  if (!hasKeys) {
+    noKeysEl.hidden = false;
+    mainEl.hidden   = true;
+    stopLoansRefresh();
+    return;
+  }
+
+  noKeysEl.hidden = true;
+  mainEl.hidden   = false;
+  setLoanMetrics('--', '--', '--');
+
+  try {
+    const res = await window.electronAPI.okxRequest('GET', '/api/v5/finance/flexible-loan/loan-info');
+    if (!res.ok) {
+      console.error('OKX loans HTTP error:', res.msg);
+      return;
+    }
+    const body = res.data as { code: string; msg: string; data: OkxLoan[] };
+    if (body.code !== '0') {
+      console.error('OKX loans API error:', body.msg);
+      return;
+    }
+    const loans = body.data ?? [];
+    const totalBorrowed   = loans.reduce((sum, l) => sum + (parseFloat(l.loanNotionalUsd)       || 0), 0);
+    const totalCollateral = loans.reduce((sum, l) => sum + (parseFloat(l.collateralNotionalUsd) || 0), 0);
+    setLoanMetrics(formatUsd(totalBorrowed), formatUsd(totalCollateral), String(loans.length));
+    renderLoanCards(loans);
+  } catch (err) {
+    console.error('fetchLoanSummary error:', err);
+  }
+}
+
+function initLoans(): void {
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="loans"]')!
+    .addEventListener('click', () => {
+      void fetchLoanSummary();
+      startLoansRefresh();
+    });
+
+  document.querySelectorAll<HTMLButtonElement>('.tab:not([data-tab="loans"])').forEach(tab => {
+    tab.addEventListener('click', () => stopLoansRefresh());
+  });
+
+  document.getElementById('btn-refresh-loans')!
+    .addEventListener('click', () => { void fetchLoanSummary(); });
+
+  document.getElementById('btn-goto-settings')!
+    .addEventListener('click', () => {
+      document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!.click();
+    });
+}
+
 // ---- CMC market indicators -------------------------------------
 
 function fgColor(v: number): string {
@@ -360,10 +573,16 @@ function showSaveConfirm(id: string): void {
 
 async function loadSettingsKeys(): Promise<void> {
   try {
-    const cmcKey = await window.electronAPI.getApiKey('cmc');
-    if (cmcKey) {
-      (document.getElementById('inp-cmc-key') as HTMLInputElement).value = cmcKey;
-    }
+    const [cmcKey, okxKey, okxSecret, okxPassphrase] = await Promise.all([
+      window.electronAPI.getApiKey('cmc'),
+      window.electronAPI.getApiKey('okx-key'),
+      window.electronAPI.getApiKey('okx-secret'),
+      window.electronAPI.getApiKey('okx-passphrase'),
+    ]);
+    if (cmcKey)        (document.getElementById('inp-cmc-key')        as HTMLInputElement).value = cmcKey;
+    if (okxKey)        (document.getElementById('inp-okx-key')        as HTMLInputElement).value = okxKey;
+    if (okxSecret)     (document.getElementById('inp-okx-secret')     as HTMLInputElement).value = okxSecret;
+    if (okxPassphrase) (document.getElementById('inp-okx-passphrase') as HTMLInputElement).value = okxPassphrase;
   } catch {
     // keytar unavailable
   }
@@ -381,12 +600,30 @@ async function saveCmcKey(): Promise<void> {
   }
 }
 
+async function saveOkxField(inputId: string, account: string, confirmId: string): Promise<void> {
+  const val = (document.getElementById(inputId) as HTMLInputElement).value.trim();
+  if (!val) return;
+  try {
+    await window.electronAPI.setApiKey(account, val);
+    showSaveConfirm(confirmId);
+  } catch {
+    // keytar unavailable
+  }
+}
+
 function initSettings(): void {
   document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!
     .addEventListener('click', () => { void loadSettingsKeys(); });
 
   document.getElementById('btn-save-cmc')!
     .addEventListener('click', () => { void saveCmcKey(); });
+
+  document.getElementById('btn-save-okx-key')!
+    .addEventListener('click', () => { void saveOkxField('inp-okx-key', 'okx-key', 'conf-okx-key'); });
+  document.getElementById('btn-save-okx-secret')!
+    .addEventListener('click', () => { void saveOkxField('inp-okx-secret', 'okx-secret', 'conf-okx-secret'); });
+  document.getElementById('btn-save-okx-passphrase')!
+    .addEventListener('click', () => { void saveOkxField('inp-okx-passphrase', 'okx-passphrase', 'conf-okx-passphrase'); });
 
   document.querySelectorAll<HTMLButtonElement>('.btn-show-hide').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -436,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
   createLiveDot();
   initMarketIndicators();
   initSettings();
+  initLoans();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });
   (document.getElementById('inp-symbol') as HTMLInputElement).addEventListener('keydown', e => {

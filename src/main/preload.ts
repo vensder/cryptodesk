@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowClose:    () => ipcRenderer.send('window-close'),
   getApiKey: (service: string): Promise<string | null> => ipcRenderer.invoke('get-api-key', service),
   setApiKey: (service: string, key: string): Promise<void> => ipcRenderer.invoke('set-api-key', service, key),
+  okxRequest: (method: string, path: string, params?: Record<string, string>) =>
+    ipcRenderer.invoke('okx-request', { method, path, params }),
 });

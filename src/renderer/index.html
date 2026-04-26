@@ -74,14 +74,36 @@
 
   </div>
 
-  <!-- Loans tab (placeholder) -->
+  <!-- Loans tab -->
   <div id="tab-loans" class="tab-content">
-    <div id="loans-placeholder">
-      <div class="placeholder-icon">&#9889;</div>
-      <h2>OKX Loan Management</h2>
-      <p>Multi-collateral loan dashboard — coming soon.</p>
-      <p class="placeholder-sub">Will include: active loans, collateral ratio, top-up / repay actions.</p>
+
+    <!-- Shown when OKX keys are not configured -->
+    <div id="loans-no-keys" hidden>
+      <p>Configure OKX API keys in <button id="btn-goto-settings" class="btn-link">Settings</button></p>
     </div>
+
+    <!-- Main content (shown when keys are present) -->
+    <div id="loans-main" hidden>
+      <div id="loans-summary-wrap">
+        <button id="btn-refresh-loans">Refresh</button>
+        <div id="loans-summary">
+          <div class="metric-card">
+            <span class="metric-label">Total Borrowed</span>
+            <span id="val-total-borrowed" class="metric-value">--</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Total Collateral</span>
+            <span id="val-total-collateral" class="metric-value">--</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Active Loans</span>
+            <span id="val-active-loans" class="metric-value">--</span>
+          </div>
+        </div>
+      </div>
+      <div id="loans-list"></div>
+    </div>
+
   </div>
 
   <!-- Settings tab -->
@@ -97,9 +119,24 @@
       </div>
       <div class="settings-row">
         <span class="settings-label">OKX API KEY</span>
-        <input id="inp-okx-key" type="password" spellcheck="false" placeholder="— coming soon —" disabled />
-        <button class="btn-show-hide" data-target="inp-okx-key" disabled>Show</button>
-        <button id="btn-save-okx" class="btn-save" disabled>Save</button>
+        <input id="inp-okx-key" type="password" spellcheck="false" placeholder="Enter OKX API key" />
+        <button class="btn-show-hide" data-target="inp-okx-key">Show</button>
+        <button id="btn-save-okx-key" class="btn-save">Save</button>
+        <span id="conf-okx-key" class="save-confirm"></span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">OKX SECRET</span>
+        <input id="inp-okx-secret" type="password" spellcheck="false" placeholder="Enter OKX secret" />
+        <button class="btn-show-hide" data-target="inp-okx-secret">Show</button>
+        <button id="btn-save-okx-secret" class="btn-save">Save</button>
+        <span id="conf-okx-secret" class="save-confirm"></span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">OKX PASSPHRASE</span>
+        <input id="inp-okx-passphrase" type="password" spellcheck="false" placeholder="Enter OKX passphrase" />
+        <button class="btn-show-hide" data-target="inp-okx-passphrase">Show</button>
+        <button id="btn-save-okx-passphrase" class="btn-save">Save</button>
+        <span id="conf-okx-passphrase" class="save-confirm"></span>
       </div>
     </div>
   </div>
