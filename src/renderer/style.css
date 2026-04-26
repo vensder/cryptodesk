@@ -17,6 +17,8 @@
   --accent:       #3a7bd5;
   --accent-hover: #4d8fe0;
   --green:        #26a69a;
+  --green-bright: #22c55e;
+  --orange:       #f59e0b;
   --red:          #ef5350;
 
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
@@ -148,7 +150,7 @@ html, body {
   white-space: nowrap;
 }
 
-select, input[type="text"] {
+select, input[type="text"], input[type="password"] {
   background: var(--bg-input);
   border: 1px solid var(--border);
   color: var(--text-primary);
@@ -208,6 +210,58 @@ option { background: var(--bg-elevated); }
   50%       { opacity: 0; }
 }
 
+/* ---- Market indicators ---- */
+#market-indicators {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.market-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.market-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+#val-btcd, #val-fg {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+#val-fg-word {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.market-sep {
+  color: var(--border);
+  font-size: 14px;
+  line-height: 1;
+}
+
+#market-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+  animation: blink-dot 1s step-start infinite;
+}
+#market-live-dot[hidden] { display: none; }
+
 /* ---- Chart ---- */
 #chart-container {
   flex: 1;
@@ -237,6 +291,82 @@ option { background: var(--bg-elevated); }
 }
 #loans-placeholder p { font-size: 13px; }
 .placeholder-sub { font-size: 11px; color: var(--text-muted); }
+
+/* ---- Settings tab ---- */
+#settings-pane {
+  padding: 28px 24px;
+}
+
+.settings-heading {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.settings-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.settings-row input[type="password"],
+.settings-row input[type="text"] {
+  width: 300px;
+}
+
+.btn-show-hide {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.btn-show-hide:hover { color: var(--text-primary); }
+.btn-show-hide:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-save {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-save:hover { background: var(--accent-hover); }
+.btn-save:disabled { background: var(--bg-elevated); color: var(--text-muted); cursor: not-allowed; }
+
+.save-confirm {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--green);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.save-confirm.visible { opacity: 1; }
 
 /* ---- Layout container ---- */
 body {

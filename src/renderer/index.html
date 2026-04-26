@@ -24,6 +24,7 @@
   <nav id="tabs">
     <button class="tab active" data-tab="charts">Charts</button>
     <button class="tab" data-tab="loans">OKX Loans</button>
+    <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
   <!-- Charts tab -->
@@ -54,6 +55,19 @@
       </div>
       <button id="btn-load">Load</button>
       <span id="status-msg"></span>
+      <div id="market-indicators">
+        <div class="market-item">
+          <span class="market-label">BTC.D</span>
+          <span id="val-btcd">--</span>
+        </div>
+        <span class="market-sep">|</span>
+        <div class="market-item">
+          <span class="market-label">F&amp;G</span>
+          <span id="val-fg">--</span>
+          <span id="val-fg-word"></span>
+        </div>
+        <span id="market-live-dot" hidden></span>
+      </div>
     </div>
 
     <div id="chart-container"></div>
@@ -67,6 +81,26 @@
       <h2>OKX Loan Management</h2>
       <p>Multi-collateral loan dashboard — coming soon.</p>
       <p class="placeholder-sub">Will include: active loans, collateral ratio, top-up / repay actions.</p>
+    </div>
+  </div>
+
+  <!-- Settings tab -->
+  <div id="tab-settings" class="tab-content">
+    <div id="settings-pane">
+      <h3 class="settings-heading">API Keys</h3>
+      <div class="settings-row">
+        <span class="settings-label">CMC API KEY</span>
+        <input id="inp-cmc-key" type="password" spellcheck="false" placeholder="Enter CoinMarketCap API key" />
+        <button class="btn-show-hide" data-target="inp-cmc-key">Show</button>
+        <button id="btn-save-cmc" class="btn-save">Save</button>
+        <span id="conf-cmc" class="save-confirm"></span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">OKX API KEY</span>
+        <input id="inp-okx-key" type="password" spellcheck="false" placeholder="— coming soon —" disabled />
+        <button class="btn-show-hide" data-target="inp-okx-key" disabled>Show</button>
+        <button id="btn-save-okx" class="btn-save" disabled>Save</button>
+      </div>
     </div>
   </div>
 

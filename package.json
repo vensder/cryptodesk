@@ -4,16 +4,19 @@
   "description": "Crypto charts and loan management desktop app",
   "main": "src/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
-    "start": "npm run build && electron . --no-sandbox",
-    "dev":   "npm run build && electron . --no-sandbox --dev"
+    "build":   "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
+    "start":   "npm run build && electron . --no-sandbox",
+    "dev":     "npm run build && electron . --no-sandbox --dev",
+    "rebuild": "electron-rebuild -f -w keytar"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@types/node": "^25.6.0",
     "electron": "^31.0.0",
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "keytar": "^7.9.0",
     "lightweight-charts": "^4.2.0"
   }
 }

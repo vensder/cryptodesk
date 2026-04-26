@@ -29,6 +29,22 @@ cryptodesk/
 
 `tsc` emits `.js` files alongside each `.ts` source file (no `outDir`). The compiled outputs are not committed — run `npm run build` to generate them.
 
+## Dependencies
+
+### Linux — libsecret (required for keytar)
+
+`keytar` uses libsecret to store API keys in the system keychain. Install it before running `npm install`:
+
+```bash
+sudo apt install libsecret-1-dev
+```
+
+After installing new native dependencies or switching Electron versions, rebuild native modules:
+
+```bash
+npm run rebuild
+```
+
 ## Setup
 
 ```bash

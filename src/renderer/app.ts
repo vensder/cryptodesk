@@ -10,6 +10,8 @@ declare global {
       windowMinimize: () => void;
       windowMaximize: () => void;
       windowClose:    () => void;
+      getApiKey: (service: string) => Promise<string | null>;
+      setApiKey: (service: string, key: string) => Promise<void>;
     };
   }
 }
@@ -36,6 +38,7 @@ interface Exchange {
 
 const REFRESH_INTERVAL_MS = 15_000;
 const MAX_ERRORS          = 3;
+const CMC_REFRESH_MS      = 15 * 60 * 1000;
 
 // ---- Exchange adapters ----------------------------------------
 
@@ -295,6 +298,107 @@ async function loadCandles(): Promise<void> {
   }
 }
 
+// ---- CMC market indicators -------------------------------------
+
+function fgColor(v: number): string {
+  if (v <= 25) return 'var(--red)';
+  if (v <= 45) return 'var(--orange)';
+  if (v <= 55) return 'var(--text-secondary)';
+  if (v <= 75) return 'var(--green)';
+  return 'var(--green-bright)';
+}
+
+async function refreshCmcData(): Promise<void> {
+  let cmcKey: string | null = null;
+  try {
+    cmcKey = await window.electronAPI.getApiKey('cmc');
+  } catch {
+    return;
+  }
+
+  if (!cmcKey) return;
+
+  const headers = { 'X-CMC_PRO_API_KEY': cmcKey };
+  const [r1, r2] = await Promise.allSettled([
+    fetch('https://pro-api.coinmarketcap.com/v1/global-metrics/quotes/latest', { headers }),
+    fetch('https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest', { headers }),
+  ]);
+
+  let anyOk = false;
+
+  if (r1.status === 'fulfilled' && r1.value.ok) {
+    const d = (await r1.value.json() as { data: { btc_dominance: number } }).data;
+    (document.getElementById('val-btcd') as HTMLSpanElement).textContent = `${d.btc_dominance.toFixed(1)}%`;
+    anyOk = true;
+  }
+
+  if (r2.status === 'fulfilled' && r2.value.ok) {
+    const d = (await r2.value.json() as { data: { value: number; value_classification: string } }).data;
+    const valEl = document.getElementById('val-fg') as HTMLSpanElement;
+    valEl.textContent = String(d.value);
+    valEl.style.color = fgColor(d.value);
+    (document.getElementById('val-fg-word') as HTMLSpanElement).textContent = d.value_classification;
+    anyOk = true;
+  }
+
+  (document.getElementById('market-live-dot') as HTMLSpanElement).hidden = !anyOk;
+}
+
+function initMarketIndicators(): void {
+  void refreshCmcData();
+  setInterval(() => { void refreshCmcData(); }, CMC_REFRESH_MS);
+}
+
+// ---- Settings tab ----------------------------------------------
+
+function showSaveConfirm(id: string): void {
+  const el = document.getElementById(id) as HTMLSpanElement;
+  el.textContent = 'Saved';
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 2000);
+}
+
+async function loadSettingsKeys(): Promise<void> {
+  try {
+    const cmcKey = await window.electronAPI.getApiKey('cmc');
+    if (cmcKey) {
+      (document.getElementById('inp-cmc-key') as HTMLInputElement).value = cmcKey;
+    }
+  } catch {
+    // keytar unavailable
+  }
+}
+
+async function saveCmcKey(): Promise<void> {
+  const key = (document.getElementById('inp-cmc-key') as HTMLInputElement).value.trim();
+  if (!key) return;
+  try {
+    await window.electronAPI.setApiKey('cmc', key);
+    showSaveConfirm('conf-cmc');
+    void refreshCmcData();
+  } catch {
+    // keytar unavailable
+  }
+}
+
+function initSettings(): void {
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!
+    .addEventListener('click', () => { void loadSettingsKeys(); });
+
+  document.getElementById('btn-save-cmc')!
+    .addEventListener('click', () => { void saveCmcKey(); });
+
+  document.querySelectorAll<HTMLButtonElement>('.btn-show-hide').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset['target'];
+      if (!targetId) return;
+      const inp = document.getElementById(targetId) as HTMLInputElement;
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+      btn.textContent = inp.type === 'password' ? 'Show' : 'Hide';
+    });
+  });
+}
+
 // ---- Tabs ------------------------------------------------------
 
 function initTabs(): void {
@@ -330,6 +434,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initWindowControls();
   createLiveDot();
+  initMarketIndicators();
+  initSettings();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });
   (document.getElementById('inp-symbol') as HTMLInputElement).addEventListener('keydown', e => {

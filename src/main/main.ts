@@ -2,6 +2,9 @@
 
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'path';
+import * as keytar from 'keytar';
+
+const KEYCHAIN_SERVICE = 'cryptodesk';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -33,7 +36,7 @@ app.whenReady().then(() => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': ["default-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.binance.com https://www.okx.com https://cdn.jsdelivr.net"],
+        'Content-Security-Policy': ["default-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.binance.com https://www.okx.com https://cdn.jsdelivr.net https://pro-api.coinmarketcap.com"],
       },
     });
   });
@@ -55,3 +58,11 @@ ipcMain.on('window-maximize', () => {
   else mainWindow?.maximize();
 });
 ipcMain.on('window-close', () => mainWindow?.close());
+
+ipcMain.handle('get-api-key', (_e, account: string) =>
+  keytar.getPassword(KEYCHAIN_SERVICE, account),
+);
+
+ipcMain.handle('set-api-key', (_e, account: string, key: string) =>
+  keytar.setPassword(KEYCHAIN_SERVICE, account, key),
+);
