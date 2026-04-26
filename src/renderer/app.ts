@@ -114,6 +114,9 @@ let chart:        LWC.IChartApi | null = null;
 let candleSeries: LWC.ISeriesApi<'Candlestick'> | null = null;
 let volumeSeries: LWC.ISeriesApi<'Histogram'> | null = null;
 
+let pendingLiqLine: { price: number; label: string } | null = null;
+let activeLiqLine:  LWC.IPriceLine | null = null;
+
 let refreshTimer:     ReturnType<typeof setInterval> | null = null;
 let consecutiveErrors = 0;
 let statusBase        = '';
@@ -262,6 +265,11 @@ function startRefresh(exchange: string, symbol: string, interval: Interval): voi
 async function loadCandles(): Promise<void> {
   stopRefresh();
 
+  if (activeLiqLine !== null) {
+    candleSeries!.removePriceLine(activeLiqLine);
+    activeLiqLine = null;
+  }
+
   const exchange = (document.getElementById('sel-exchange') as HTMLSelectElement).value;
   const symbol   = (document.getElementById('inp-symbol')   as HTMLInputElement).value.trim();
   const interval = (document.getElementById('sel-interval') as HTMLSelectElement).value as Interval;
@@ -296,6 +304,18 @@ async function loadCandles(): Promise<void> {
     statusBase = `${candles.length} candles  -  ${exchange.toUpperCase()}  ${symbol.toUpperCase()}  ${interval}`;
     setStatus(statusBase, 'ok');
     startRefresh(exchange, symbol, interval);
+
+    if (pendingLiqLine !== null) {
+      activeLiqLine = candleSeries!.createPriceLine({
+        price:            pendingLiqLine.price,
+        color:            '#ef5350',
+        lineWidth:        1,
+        lineStyle:        LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title:            pendingLiqLine.label,
+      });
+      pendingLiqLine = null;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(err);
@@ -303,6 +323,16 @@ async function loadCandles(): Promise<void> {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ---- Liq line nav ----------------------------------------------
+
+function openChartWithLiqLine(instId: string, liqPx: string): void {
+  (document.getElementById('sel-exchange') as HTMLSelectElement).value = 'okx';
+  (document.getElementById('inp-symbol')   as HTMLInputElement).value  = instId.replace('/', '-');
+  pendingLiqLine = { price: parseFloat(liqPx), label: 'Liq ' + liqPx };
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="charts"]')!.click();
+  void loadCandles();
 }
 
 // ---- Loans tab -------------------------------------------------
@@ -381,12 +411,15 @@ function makeValueCell(label: string, value: string, color: string): HTMLDivElem
 
 function makeLiqPriceCell(risk: OkxRiskWarning | undefined): HTMLDivElement {
   const cell = makeCell('Liq Price');
-  const val = document.createElement('span');
-  val.className = 'cell-value';
   if (risk?.liqPx) {
-    val.textContent = `${risk.liqPx}${risk.instId ? ' ' + risk.instId : ''}`;
-    cell.appendChild(val);
+    const link = document.createElement('span');
+    link.className = 'liq-link';
+    link.textContent = `${risk.liqPx}${risk.instId ? ' ' + risk.instId : ''}`;
+    link.addEventListener('click', () => openChartWithLiqLine(risk.instId, risk.liqPx));
+    cell.appendChild(link);
   } else {
+    const val = document.createElement('span');
+    val.className = 'cell-value';
     val.textContent = '--';
     const sub = document.createElement('span');
     sub.className = 'cell-sub';

@@ -446,6 +446,18 @@ option { background: var(--bg-elevated); }
   color: var(--text-muted);
 }
 
+/* ---- Liq link ---- */
+.liq-link {
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--accent);
+  transition: color 0.15s;
+}
+.liq-link:hover { color: var(--accent-hover); border-bottom-color: var(--accent-hover); }
+
 /* ---- Settings tab ---- */
 #settings-pane {
   padding: 28px 24px;
