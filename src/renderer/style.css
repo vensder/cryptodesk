@@ -452,11 +452,10 @@ option { background: var(--bg-elevated); }
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 14px;
-  text-decoration: none;
-  border-bottom: 1px dashed var(--accent);
+  text-decoration: underline;
   transition: color 0.15s;
 }
-.liq-link:hover { color: var(--accent-hover); border-bottom-color: var(--accent-hover); }
+.liq-link:hover { color: var(--accent-hover); }
 
 /* ---- Settings tab ---- */
 #settings-pane {

@@ -438,8 +438,7 @@ function buildLoanCard(loan: OkxLoan): HTMLDivElement {
   header.className = 'loan-card-header';
   const idEl = document.createElement('span');
   idEl.className = 'loan-id';
-  idEl.title = loan.ordId;
-  idEl.textContent = `…${loan.ordId.slice(-8)}`;
+  idEl.textContent = loan.ordId;
   header.appendChild(idEl);
   card.appendChild(header);
 
