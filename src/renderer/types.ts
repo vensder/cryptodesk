@@ -30,5 +30,21 @@ export interface OkxLoan {
 export interface OkxResponse {
   ok:   boolean;
   data: unknown;
+  raw:  string;
   msg:  string;
+}
+
+export interface OkxFundingAsset {
+  ccy:        string;
+  bal:        string;
+  availBal:   string;
+  frozenBal:  string;
+}
+
+export interface OkxTradingAsset {
+  ccy:        string;
+  eq:         string;
+  availEq:    string;
+  availBal:   string;
+  frozenBal:  string;
 }

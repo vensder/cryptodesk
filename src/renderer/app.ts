@@ -1,7 +1,7 @@
 'use strict';
 
 import type * as LWC from 'lightweight-charts';
-import type { OkxLoan, OkxRiskWarning, OkxResponse } from './types';
+import type { OkxLoan, OkxRiskWarning, OkxResponse, OkxFundingAsset, OkxTradingAsset } from './types';
 
 declare const LightweightCharts: typeof LWC;
 
@@ -42,6 +42,7 @@ const REFRESH_INTERVAL_MS  = 15_000;
 const MAX_ERRORS           = 3;
 const CMC_REFRESH_MS       = 15 * 60 * 1000;
 const LOANS_REFRESH_MS     = 60_000;
+const ASSETS_REFRESH_MS    = 60_000;
 
 // ---- Exchange adapters ----------------------------------------
 
@@ -125,6 +126,16 @@ let liveDot:          HTMLSpanElement | null = null;
 // ---- Loans state -----------------------------------------------
 
 let loansRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+// ---- Assets state ----------------------------------------------
+
+let assetsRefreshTimer:   ReturnType<typeof setInterval> | null = null;
+let fundingAssets:        OkxFundingAsset[] = [];
+let tradingAssets:        OkxTradingAsset[] = [];
+let assetsTransferCcy     = '';
+let assetsTransferDirFrom = '6';   // '6' = Funding, '18' = Trading
+let assetsTransferDirTo   = '18';
+let assetsTransferAvail   = '0';   // raw API string — never parseFloat'd to avoid precision loss
 
 // ---- Chart setup -----------------------------------------------
 
@@ -508,7 +519,7 @@ async function fetchLoanSummary(): Promise<void> {
       console.error('OKX loans HTTP error:', res.msg);
       return;
     }
-    const body = res.data as { code: string; msg: string; data: OkxLoan[] };
+    const body = JSON.parse(res.raw) as { code: string; msg: string; data: OkxLoan[] };
     if (body.code !== '0') {
       console.error('OKX loans API error:', body.msg);
       return;
@@ -541,6 +552,298 @@ function initLoans(): void {
     .addEventListener('click', () => {
       document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!.click();
     });
+}
+
+// ---- Assets tab ------------------------------------------------
+
+function fmtAmt(v: string): string {
+  const n = parseFloat(v);
+  if (isNaN(n)) return '--';
+  if (n === 0)  return '0';
+  return n.toFixed(8).replace(/\.?0+$/, '');
+}
+
+function rawTradingAvail(ta: OkxTradingAsset): string {
+  return ta.availBal || ta.availEq || ta.eq || '0';
+}
+
+function updateTransferDir(): void {
+  const names: Record<string, string> = { '6': 'Funding', '18': 'Trading' };
+  (document.getElementById('btn-transfer-dir') as HTMLButtonElement).textContent =
+    `⇄ ${names[assetsTransferDirFrom]} → ${names[assetsTransferDirTo]}`;
+}
+
+function clearSelectedRows(): void {
+  document.querySelectorAll<HTMLTableRowElement>('.asset-row.selected')
+    .forEach(r => r.classList.remove('selected'));
+}
+
+function clearActivePctBtns(): void {
+  document.querySelectorAll<HTMLButtonElement>('.btn-pct')
+    .forEach(b => b.classList.remove('active'));
+}
+
+function openTransferPanel(ccy: string, from: string, to: string, avail: string, row: HTMLTableRowElement): void {
+  clearSelectedRows();
+  clearActivePctBtns();
+  row.classList.add('selected');
+  assetsTransferCcy     = ccy;
+  assetsTransferDirFrom = from;
+  assetsTransferDirTo   = to;
+  assetsTransferAvail   = avail;
+  (document.getElementById('transfer-ccy') as HTMLSpanElement).textContent = ccy;
+  updateTransferDir();
+  (document.getElementById('inp-transfer-amt') as HTMLInputElement).value = '';
+  const msgEl = document.getElementById('transfer-msg') as HTMLSpanElement;
+  msgEl.textContent = '';
+  msgEl.className   = '';
+  (document.getElementById('btn-transfer-confirm') as HTMLButtonElement).disabled = false;
+  document.getElementById('transfer-panel')!.classList.add('open');
+}
+
+function closeTransferPanel(): void {
+  document.getElementById('transfer-panel')!.classList.remove('open');
+  clearSelectedRows();
+  clearActivePctBtns();
+}
+
+function renderFundingTable(): void {
+  const hideZero = (document.getElementById('chk-hide-zero-funding') as HTMLInputElement).checked;
+  const tbody    = document.getElementById('funding-tbody') as HTMLTableSectionElement;
+  const visible  = hideZero ? fundingAssets.filter(a => parseFloat(a.bal) > 0) : fundingAssets;
+  (document.getElementById('funding-count') as HTMLSpanElement).textContent = String(visible.length);
+  tbody.innerHTML = '';
+  for (const asset of visible) {
+    const tr = document.createElement('tr');
+    tr.className = 'asset-row';
+    for (const text of [asset.ccy, fmtAmt(asset.bal), fmtAmt(asset.availBal), fmtAmt(asset.frozenBal)]) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    tr.addEventListener('click', () => openTransferPanel(asset.ccy, '6', '18', asset.availBal, tr));
+    tbody.appendChild(tr);
+  }
+}
+
+function renderTradingTable(): void {
+  const hideZero = (document.getElementById('chk-hide-zero-trading') as HTMLInputElement).checked;
+  const tbody    = document.getElementById('trading-tbody') as HTMLTableSectionElement;
+  const visible  = hideZero ? tradingAssets.filter(a => parseFloat(a.eq) > 0) : tradingAssets;
+  (document.getElementById('trading-count') as HTMLSpanElement).textContent = String(visible.length);
+  tbody.innerHTML = '';
+  for (const asset of visible) {
+    const tr = document.createElement('tr');
+    tr.className = 'asset-row';
+    for (const text of [asset.ccy, fmtAmt(asset.eq), fmtAmt(asset.availEq), fmtAmt(asset.frozenBal)]) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    tr.addEventListener('click', () => openTransferPanel(asset.ccy, '18', '6', rawTradingAvail(asset), tr));
+    tbody.appendChild(tr);
+  }
+}
+
+function stopAssetsRefresh(): void {
+  if (assetsRefreshTimer !== null) {
+    clearInterval(assetsRefreshTimer);
+    assetsRefreshTimer = null;
+  }
+}
+
+function startAssetsRefresh(): void {
+  stopAssetsRefresh();
+  assetsRefreshTimer = setInterval(() => { void fetchAssets(); }, ASSETS_REFRESH_MS);
+}
+
+async function fetchAssets(): Promise<void> {
+  let hasKeys = false;
+  try {
+    const [k, s, p] = await Promise.all([
+      window.electronAPI.getApiKey('okx-key'),
+      window.electronAPI.getApiKey('okx-secret'),
+      window.electronAPI.getApiKey('okx-passphrase'),
+    ]);
+    hasKeys = !!(k && s && p);
+  } catch { /* keytar unavailable */ }
+
+  const noKeysEl = document.getElementById('assets-no-keys') as HTMLDivElement;
+  const mainEl   = document.getElementById('assets-main')    as HTMLDivElement;
+
+  if (!hasKeys) {
+    noKeysEl.hidden = false;
+    mainEl.hidden   = true;
+    stopAssetsRefresh();
+    return;
+  }
+
+  noKeysEl.hidden = true;
+  mainEl.hidden   = false;
+
+  try {
+    const [fundingRes, tradingRes] = await Promise.all([
+      window.electronAPI.okxRequest('GET', '/api/v5/asset/balances'),
+      window.electronAPI.okxRequest('GET', '/api/v5/account/balance'),
+    ]);
+
+    // if (fundingRes.ok) {
+    //   const body = JSON.parse(fundingRes.raw) as { code: string; data: OkxFundingAsset[] };
+    //   if (body.code === '0') {
+    //     fundingAssets = body.data ?? [];
+    //     renderFundingTable();
+    //   }
+    // }
+
+    // if (tradingRes.ok) {
+    //   const body = JSON.parse(tradingRes.raw) as { code: string; data: Array<{ details: OkxTradingAsset[] }> };
+    //   if (body.code === '0') {
+    //     tradingAssets = body.data?.[0]?.details ?? [];
+    //     renderTradingTable();
+    //   }
+    // }
+
+    if (fundingRes.ok && fundingRes.raw) {
+      const body = JSON.parse(fundingRes.raw) as { code: string; data: OkxFundingAsset[] };
+      if (body.code === '0') {
+        fundingAssets = body.data ?? [];
+        renderFundingTable();
+      }
+    }
+    
+    if (tradingRes.ok && tradingRes.raw) {
+      const body = JSON.parse(tradingRes.raw) as { code: string; data: Array<{ details: OkxTradingAsset[] }> };
+      if (body.code === '0') {
+        tradingAssets = body.data?.[0]?.details ?? [];
+        renderTradingTable();
+      }
+    }
+
+  } catch (err) {
+    console.error('fetchAssets error:', err);
+  }
+}
+
+async function doTransfer(): Promise<void> {
+  const amtInput   = document.getElementById('inp-transfer-amt')    as HTMLInputElement;
+  const confirmBtn = document.getElementById('btn-transfer-confirm') as HTMLButtonElement;
+  const msgEl      = document.getElementById('transfer-msg')         as HTMLSpanElement;
+
+  // Keep the raw string for the API call — converting via parseFloat then String() loses precision
+  // (e.g. "9.5160375216935999" → 9.5160375216936 → "9.5160375216936" triggers OKX insufficient balance).
+  const amtStr = amtInput.value.trim();
+  const amt    = parseFloat(amtStr);          // comparison only, never sent to OKX
+  const avail  = parseFloat(assetsTransferAvail); // comparison only
+
+  msgEl.textContent = '';
+  msgEl.className   = '';
+
+  if (isNaN(amt) || amt <= 0) {
+    msgEl.textContent = 'Amount must be > 0';
+    msgEl.className   = 'error';
+    return;
+  }
+  if (amt > avail) {
+    msgEl.textContent = `Exceeds available (${fmtAmt(assetsTransferAvail)})`;
+    msgEl.className   = 'error';
+    return;
+  }
+
+  confirmBtn.disabled = true;
+  try {
+    const res  = await window.electronAPI.okxRequest('POST', '/api/v5/asset/transfer', {
+      type: '0',
+      ccy:  assetsTransferCcy,
+      amt:  amtStr,
+      from: assetsTransferDirFrom,
+      to:   assetsTransferDirTo,
+    });
+    const body = JSON.parse(res.raw) as { code: string; msg: string };
+    if (res.ok && body.code === '0') {
+      msgEl.textContent = `Transferred ${fmtAmt(amtStr)} ${assetsTransferCcy}`;
+      msgEl.className   = 'ok';
+      setTimeout(() => {
+        void fetchAssets();
+        closeTransferPanel();
+      }, 1500);
+    } else {
+      msgEl.textContent   = body.msg || res.msg || 'Transfer failed';
+      msgEl.className     = 'error';
+      confirmBtn.disabled = false;
+    }
+  } catch (err) {
+    msgEl.textContent   = err instanceof Error ? err.message : 'Transfer failed';
+    msgEl.className     = 'error';
+    confirmBtn.disabled = false;
+  }
+}
+
+function calcPctAmount(pct: number): string {
+  const raw = parseFloat(assetsTransferAvail);
+  if (isNaN(raw) || raw <= 0) return '0';
+  const result = raw * pct;
+  const str = result.toFixed(10);
+  const dot  = str.indexOf('.');
+  return str.slice(0, dot + 9).replace(/\.?0+$/, '');
+}
+
+function initAssets(): void {
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="assets"]')!
+    .addEventListener('click', () => {
+      void fetchAssets();
+      startAssetsRefresh();
+    });
+
+  document.querySelectorAll<HTMLButtonElement>('.tab:not([data-tab="assets"])').forEach(tab => {
+    tab.addEventListener('click', () => {
+      stopAssetsRefresh();
+      closeTransferPanel();
+    });
+  });
+
+  document.getElementById('btn-refresh-assets')!
+    .addEventListener('click', () => { void fetchAssets(); });
+
+  document.getElementById('btn-assets-goto-settings')!
+    .addEventListener('click', () => {
+      document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!.click();
+    });
+
+  document.getElementById('chk-hide-zero-funding')!
+    .addEventListener('change', () => renderFundingTable());
+
+  document.getElementById('chk-hide-zero-trading')!
+    .addEventListener('change', () => renderTradingTable());
+
+  document.getElementById('btn-transfer-dir')!
+    .addEventListener('click', () => {
+      [assetsTransferDirFrom, assetsTransferDirTo] = [assetsTransferDirTo, assetsTransferDirFrom];
+      updateTransferDir();
+      // Update available using the raw API string for the new source account
+      if (assetsTransferDirFrom === '6') {
+        assetsTransferAvail = fundingAssets.find(a => a.ccy === assetsTransferCcy)?.availBal || '0';
+      } else {
+        const ta = tradingAssets.find(a => a.ccy === assetsTransferCcy);
+        assetsTransferAvail = ta ? rawTradingAvail(ta) : '0';
+      }
+      (document.getElementById('inp-transfer-amt') as HTMLInputElement).value = '';
+    });
+
+  document.getElementById('transfer-pct-btns')!
+    .addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.btn-pct');
+      if (!btn) return;
+      clearActivePctBtns();
+      btn.classList.add('active');
+      const pct = parseFloat(btn.dataset['pct'] ?? '0');
+      (document.getElementById('inp-transfer-amt') as HTMLInputElement).value = calcPctAmount(pct);
+    });
+
+  document.getElementById('btn-transfer-confirm')!
+    .addEventListener('click', () => { void doTransfer(); });
+
+  document.getElementById('btn-transfer-close')!
+    .addEventListener('click', () => { closeTransferPanel(); });
 }
 
 // ---- CMC market indicators -------------------------------------
@@ -706,6 +1009,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMarketIndicators();
   initSettings();
   initLoans();
+  initAssets();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });
   (document.getElementById('inp-symbol') as HTMLInputElement).addEventListener('keydown', e => {

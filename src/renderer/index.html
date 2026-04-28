@@ -23,6 +23,7 @@
   <!-- Tab bar -->
   <nav id="tabs">
     <button class="tab active" data-tab="charts">Charts</button>
+    <button class="tab" data-tab="assets">OKX Assets</button>
     <button class="tab" data-tab="loans">OKX Loans</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
@@ -71,6 +72,92 @@
     </div>
 
     <div id="chart-container"></div>
+
+  </div>
+
+  <!-- OKX Assets tab -->
+  <div id="tab-assets" class="tab-content">
+
+    <div id="assets-no-keys" hidden>
+      <p>Configure OKX API keys in <button id="btn-assets-goto-settings" class="btn-link">Settings</button></p>
+    </div>
+
+    <div id="assets-main" hidden>
+      <div id="assets-columns">
+
+        <!-- Funding column -->
+        <div class="assets-col">
+          <div class="assets-col-header">
+            <span class="assets-col-title">FUNDING</span>
+            <span class="assets-badge" id="funding-count">0</span>
+            <button id="btn-refresh-assets" title="Refresh">&#8635;</button>
+          </div>
+          <label class="assets-filter">
+            <input type="checkbox" id="chk-hide-zero-funding" checked />
+            <span>Hide zero balances</span>
+          </label>
+          <div class="assets-table-wrap">
+            <table class="assets-table">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Balance</th>
+                  <th>Available</th>
+                  <th>Frozen</th>
+                </tr>
+              </thead>
+              <tbody id="funding-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Trading column -->
+        <div class="assets-col">
+          <div class="assets-col-header">
+            <span class="assets-col-title">TRADING</span>
+            <span class="assets-badge" id="trading-count">0</span>
+          </div>
+          <label class="assets-filter">
+            <input type="checkbox" id="chk-hide-zero-trading" checked />
+            <span>Hide zero balances</span>
+          </label>
+          <div class="assets-table-wrap">
+            <table class="assets-table">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Equity</th>
+                  <th>Available</th>
+                  <th>Frozen</th>
+                </tr>
+              </thead>
+              <tbody id="trading-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Transfer panel — always in DOM, toggled with .open -->
+      <div id="transfer-panel">
+        <div id="transfer-panel-inner">
+          <span id="transfer-ccy"></span>
+          <button id="btn-transfer-dir">Funding &#x21c4; Trading</button>
+          <input id="inp-transfer-amt" type="text" inputmode="decimal" placeholder="Amount" />
+          <div id="transfer-pct-btns">
+            <button class="btn-pct" data-pct="0.02">2%</button>
+            <button class="btn-pct" data-pct="0.05">5%</button>
+            <button class="btn-pct" data-pct="0.10">10%</button>
+            <button class="btn-pct" data-pct="0.50">50%</button>
+            <button class="btn-pct" data-pct="0.999">99.9%</button>
+            <button class="btn-pct" data-pct="1.00">100%</button>
+          </div>
+          <button id="btn-transfer-confirm">Transfer</button>
+          <span id="transfer-msg"></span>
+          <button id="btn-transfer-close">&#10005;</button>
+        </div>
+      </div>
+    </div>
 
   </div>
 

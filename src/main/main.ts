@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'path';
 import * as keytar from 'keytar';
 import crypto from 'crypto';
+import { parse as losslessParse } from 'lossless-json';
 
 const KEYCHAIN_SERVICE = 'cryptodesk';
 
@@ -109,11 +110,14 @@ ipcMain.handle(
         ...(isGet ? {} : { body }),
       });
 
-      const data = await res.json() as unknown;
-      return { ok: res.ok, data, msg: res.ok ? '' : res.statusText };
+      const raw     = await res.text();
+      // console.log('[main] full response:', raw); // for debugging - do not delete this commented line
+      const lossless = losslessParse(raw);
+      const safeRaw  = JSON.stringify(lossless);
+      return { ok: res.ok, data: null, raw: safeRaw, msg: res.ok ? '' : res.statusText };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, data: null, msg };
+      return { ok: false, data: null, raw: '', msg };
     }
   },
 );
