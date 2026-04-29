@@ -48,3 +48,10 @@ export interface OkxTradingAsset {
   availBal:   string;
   frozenBal:  string;
 }
+
+export interface OkxAdjustCollateralParams {
+  ordId:         string;
+  type:          'add' | 'reduce';
+  collateralCcy: string;
+  collateralAmt: string;
+}

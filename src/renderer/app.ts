@@ -127,6 +127,13 @@ let liveDot:          HTMLSpanElement | null = null;
 
 let loansRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
+type LoanSortKey = 'ltv' | 'collateral';
+type SortDir     = 'asc' | 'desc';
+
+let loanSortKey: LoanSortKey = 'ltv';
+let loanSortDir: SortDir     = 'desc';
+let loansCache:  OkxLoan[]   = [];
+
 // ---- Assets state ----------------------------------------------
 
 let assetsRefreshTimer:   ReturnType<typeof setInterval> | null = null;
@@ -136,6 +143,13 @@ let assetsTransferCcy     = '';
 let assetsTransferDirFrom = '6';   // '6' = Funding, '18' = Trading
 let assetsTransferDirTo   = '18';
 let assetsTransferAvail   = '0';   // raw API string — never parseFloat'd to avoid precision loss
+
+// ---- Collateral panel state ------------------------------------
+
+let colPanelOrdId  = '';
+let colPanelType:   'add' | 'reduce' = 'add';
+let colPanelAvail  = '0';
+let colPanelLoan:   OkxLoan | null = null;
 
 // ---- Chart setup -----------------------------------------------
 
@@ -451,6 +465,20 @@ function buildLoanCard(loan: OkxLoan): HTMLDivElement {
   idEl.className = 'loan-id';
   idEl.textContent = loan.ordId;
   header.appendChild(idEl);
+
+  const headerActions = document.createElement('div');
+  headerActions.className = 'loan-header-actions';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn-add-col';
+  addBtn.textContent = '+ Collateral';
+  addBtn.addEventListener('click', () => { void openCollateralPanel(loan, 'add'); });
+  const reduceBtn = document.createElement('button');
+  reduceBtn.className = 'btn-reduce-col';
+  reduceBtn.textContent = '- Collateral';
+  reduceBtn.addEventListener('click', () => { void openCollateralPanel(loan, 'reduce'); });
+  headerActions.appendChild(addBtn);
+  headerActions.appendChild(reduceBtn);
+  header.appendChild(headerActions);
   card.appendChild(header);
 
   const grid = document.createElement('div');
@@ -466,14 +494,37 @@ function buildLoanCard(loan: OkxLoan): HTMLDivElement {
   return card;
 }
 
-function renderLoanCards(loans: OkxLoan[]): void {
+function sortedLoans(loans: OkxLoan[]): OkxLoan[] {
+  return [...loans].sort((a, b) => {
+    let va: number, vb: number;
+    if (loanSortKey === 'ltv') {
+      va = parseFloat(a.curLTV) || 0;
+      vb = parseFloat(b.curLTV) || 0;
+    } else {
+      va = parseFloat(a.collateralNotionalUsd) || 0;
+      vb = parseFloat(b.collateralNotionalUsd) || 0;
+    }
+    return loanSortDir === 'desc' ? vb - va : va - vb;
+  });
+}
+
+function updateSortBar(): void {
+  document.querySelectorAll<HTMLButtonElement>('.btn-sort').forEach(btn => {
+    const isActive = btn.dataset['key'] === loanSortKey;
+    btn.classList.toggle('active', isActive);
+    const label = btn.dataset['key'] === 'ltv' ? 'LTV' : 'Collateral USD';
+    btn.textContent = isActive ? `${label} ${loanSortDir === 'desc' ? '↓' : '↑'}` : label;
+  });
+}
+
+function renderLoanCards(): void {
   const container = document.getElementById('loans-list') as HTMLDivElement;
   container.innerHTML = '';
-  if (loans.length === 0) {
+  if (loansCache.length === 0) {
     container.textContent = 'No active loans';
     return;
   }
-  for (const loan of loans) container.appendChild(buildLoanCard(loan));
+  for (const loan of sortedLoans(loansCache)) container.appendChild(buildLoanCard(loan));
 }
 
 function stopLoansRefresh(): void {
@@ -524,17 +575,34 @@ async function fetchLoanSummary(): Promise<void> {
       console.error('OKX loans API error:', body.msg);
       return;
     }
-    const loans = body.data ?? [];
-    const totalBorrowed   = loans.reduce((sum, l) => sum + (parseFloat(l.loanNotionalUsd)       || 0), 0);
-    const totalCollateral = loans.reduce((sum, l) => sum + (parseFloat(l.collateralNotionalUsd) || 0), 0);
-    setLoanMetrics(formatUsd(totalBorrowed), formatUsd(totalCollateral), String(loans.length));
-    renderLoanCards(loans);
+    loansCache = body.data ?? [];
+    const totalBorrowed   = loansCache.reduce((sum, l) => sum + (parseFloat(l.loanNotionalUsd)       || 0), 0);
+    const totalCollateral = loansCache.reduce((sum, l) => sum + (parseFloat(l.collateralNotionalUsd) || 0), 0);
+    setLoanMetrics(formatUsd(totalBorrowed), formatUsd(totalCollateral), String(loansCache.length));
+    renderLoanCards();
   } catch (err) {
     console.error('fetchLoanSummary error:', err);
   }
 }
 
 function initLoans(): void {
+  document.getElementById('loans-sort-bar')!
+    .addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.btn-sort');
+      if (!btn) return;
+      const key = btn.dataset['key'] as LoanSortKey;
+      if (key === loanSortKey) {
+        loanSortDir = loanSortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        loanSortKey = key;
+        loanSortDir = 'desc';
+      }
+      updateSortBar();
+      renderLoanCards();
+    });
+
+  updateSortBar();
+
   document.querySelector<HTMLButtonElement>('.tab[data-tab="loans"]')!
     .addEventListener('click', () => {
       void fetchLoanSummary();
@@ -542,7 +610,10 @@ function initLoans(): void {
     });
 
   document.querySelectorAll<HTMLButtonElement>('.tab:not([data-tab="loans"])').forEach(tab => {
-    tab.addEventListener('click', () => stopLoansRefresh());
+    tab.addEventListener('click', () => {
+      stopLoansRefresh();
+      closeCollateralPanel();
+    });
   });
 
   document.getElementById('btn-refresh-loans')!
@@ -552,6 +623,167 @@ function initLoans(): void {
     .addEventListener('click', () => {
       document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!.click();
     });
+}
+
+// ---- Collateral panel -----------------------------------------
+
+function closeCollateralPanel(): void {
+  document.getElementById('collateral-panel')!.classList.remove('open');
+  colPanelLoan = null;
+}
+
+async function updateColPanelAvail(ccy: string): Promise<void> {
+  const availEl = document.getElementById('col-avail') as HTMLSpanElement;
+  availEl.textContent = '...';
+
+  if (colPanelType === 'reduce') {
+    try {
+      const res = await window.electronAPI.okxRequest(
+        'GET', '/api/v5/finance/flexible-loan/max-collateral-redeem-amount',
+        { ccy, ordId: colPanelOrdId },
+      );
+      if (res.ok && res.raw) {
+        const body = JSON.parse(res.raw) as { code: string; data: Array<{ maxRedeemAmt: string }> };
+        if (body.code === '0' && body.data?.[0]?.maxRedeemAmt) {
+          colPanelAvail = body.data[0].maxRedeemAmt;
+          availEl.textContent = `Max redeemable: ${fmtAmt(colPanelAvail)} ${ccy}`;
+          return;
+        }
+      }
+    } catch {
+      // fall through to fallback
+    }
+    const item = colPanelLoan?.collateralData.find(c => c.ccy === ccy);
+    colPanelAvail = item?.amt ?? '0';
+    availEl.textContent = `Collateral amt: ${fmtAmt(colPanelAvail)} ${ccy}`;
+  } else {
+    try {
+      const res = await window.electronAPI.okxRequest('GET', '/api/v5/asset/balances', { ccy });
+      if (res.ok && res.raw) {
+        const body = JSON.parse(res.raw) as { code: string; data: OkxFundingAsset[] };
+        if (body.code === '0') {
+          colPanelAvail = body.data?.[0]?.availBal ?? '0';
+        } else {
+          colPanelAvail = '0';
+        }
+      } else {
+        colPanelAvail = '0';
+      }
+    } catch {
+      colPanelAvail = '0';
+    }
+    availEl.textContent = `Funding available: ${fmtAmt(colPanelAvail)} ${ccy}`;
+  }
+}
+
+async function openCollateralPanel(loan: OkxLoan, type: 'add' | 'reduce'): Promise<void> {
+  colPanelLoan  = loan;
+  colPanelOrdId = loan.ordId;
+  colPanelType  = type;
+
+  (document.getElementById('col-title')   as HTMLSpanElement).textContent = type === 'add' ? 'Add Collateral' : 'Reduce Collateral';
+  (document.getElementById('col-ord-id')  as HTMLSpanElement).textContent = loan.ordId;
+
+  const sel = document.getElementById('sel-col-ccy') as HTMLSelectElement;
+  sel.innerHTML = '';
+  for (const item of loan.collateralData) {
+    const opt = document.createElement('option');
+    opt.value = item.ccy;
+    opt.textContent = item.ccy;
+    sel.appendChild(opt);
+  }
+
+  (document.getElementById('inp-col-amt')     as HTMLInputElement).value = '';
+  const msgEl = document.getElementById('col-msg') as HTMLSpanElement;
+  msgEl.textContent = '';
+  msgEl.className   = '';
+  (document.getElementById('btn-col-confirm') as HTMLButtonElement).disabled = false;
+  document.querySelectorAll<HTMLButtonElement>('#col-pct-btns .btn-pct')
+    .forEach(b => b.classList.remove('active'));
+
+  await updateColPanelAvail(sel.value);
+  document.getElementById('collateral-panel')!.classList.add('open');
+}
+
+async function doAdjustCollateral(): Promise<void> {
+  const amtInput   = document.getElementById('inp-col-amt')    as HTMLInputElement;
+  const confirmBtn = document.getElementById('btn-col-confirm') as HTMLButtonElement;
+  const msgEl      = document.getElementById('col-msg')         as HTMLSpanElement;
+
+  const amtStr = amtInput.value.trim();
+  const amt    = parseFloat(amtStr);
+  const avail  = parseFloat(colPanelAvail);
+
+  msgEl.textContent = '';
+  msgEl.className   = '';
+
+  if (isNaN(amt) || amt <= 0) {
+    msgEl.textContent = 'Amount must be > 0';
+    msgEl.className   = 'error';
+    return;
+  }
+  if (amt > avail) {
+    msgEl.textContent = `Exceeds available (${fmtAmt(colPanelAvail)})`;
+    msgEl.className   = 'error';
+    return;
+  }
+
+  const ccy = (document.getElementById('sel-col-ccy') as HTMLSelectElement).value;
+
+  confirmBtn.disabled = true;
+  try {
+    const res = await window.electronAPI.okxRequest('POST', '/api/v5/finance/flexible-loan/adjust-collateral', {
+      ordId:         colPanelOrdId,
+      type:          colPanelType,
+      collateralCcy: ccy,
+      collateralAmt: amtStr,
+    });
+    const body = JSON.parse(res.raw) as { code: string; msg: string };
+    if (res.ok && body.code === '0') {
+      msgEl.textContent = `${colPanelType === 'add' ? 'Added' : 'Reduced'} ${fmtAmt(amtStr)} ${ccy}`;
+      msgEl.className   = 'ok';
+      setTimeout(() => {
+        void fetchLoanSummary();
+        closeCollateralPanel();
+      }, 1500);
+    } else {
+      msgEl.textContent   = body.msg || res.msg || 'Adjustment failed';
+      msgEl.className     = 'error';
+      confirmBtn.disabled = false;
+    }
+  } catch (err) {
+    msgEl.textContent   = err instanceof Error ? err.message : 'Adjustment failed';
+    msgEl.className     = 'error';
+    confirmBtn.disabled = false;
+  }
+}
+
+function initCollateralPanel(): void {
+  document.getElementById('sel-col-ccy')!
+    .addEventListener('change', () => {
+      const ccy = (document.getElementById('sel-col-ccy') as HTMLSelectElement).value;
+      (document.getElementById('inp-col-amt') as HTMLInputElement).value = '';
+      document.querySelectorAll<HTMLButtonElement>('#col-pct-btns .btn-pct')
+        .forEach(b => b.classList.remove('active'));
+      void updateColPanelAvail(ccy);
+    });
+
+  document.getElementById('col-pct-btns')!
+    .addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.btn-pct');
+      if (!btn) return;
+      document.querySelectorAll<HTMLButtonElement>('#col-pct-btns .btn-pct')
+        .forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const pct = parseFloat(btn.dataset['pct'] ?? '0');
+      (document.getElementById('inp-col-amt') as HTMLInputElement).value = calcPct(colPanelAvail, pct);
+    });
+
+  document.getElementById('btn-col-confirm')!
+    .addEventListener('click', () => { void doAdjustCollateral(); });
+
+  document.getElementById('btn-col-close')!
+    .addEventListener('click', () => { closeCollateralPanel(); });
 }
 
 // ---- Assets tab ------------------------------------------------
@@ -778,13 +1010,17 @@ async function doTransfer(): Promise<void> {
   }
 }
 
-function calcPctAmount(pct: number): string {
-  const raw = parseFloat(assetsTransferAvail);
+function calcPct(avail: string, pct: number): string {
+  const raw = parseFloat(avail);
   if (isNaN(raw) || raw <= 0) return '0';
   const result = raw * pct;
-  const str = result.toFixed(10);
-  const dot  = str.indexOf('.');
+  const str    = result.toFixed(10);
+  const dot    = str.indexOf('.');
   return str.slice(0, dot + 9).replace(/\.?0+$/, '');
+}
+
+function calcPctAmount(pct: number): string {
+  return calcPct(assetsTransferAvail, pct);
 }
 
 function initAssets(): void {
@@ -1009,6 +1245,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMarketIndicators();
   initSettings();
   initLoans();
+  initCollateralPanel();
   initAssets();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });

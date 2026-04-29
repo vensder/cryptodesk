@@ -188,7 +188,31 @@
           </div>
         </div>
       </div>
+      <div id="loans-sort-bar">
+        <span class="sort-label">Sort by:</span>
+        <button class="btn-sort active" data-key="ltv">LTV</button>
+        <button class="btn-sort" data-key="collateral">Collateral USD</button>
+      </div>
       <div id="loans-list"></div>
+
+      <!-- Collateral adjustment panel — always in DOM, toggled with .open -->
+      <div id="collateral-panel">
+        <span id="col-title">Add Collateral</span>
+        <span id="col-ord-id"></span>
+        <select id="sel-col-ccy"></select>
+        <span id="col-avail"></span>
+        <input id="inp-col-amt" type="text" inputmode="decimal" placeholder="Amount" />
+        <div id="col-pct-btns">
+          <button class="btn-pct" data-pct="0.02">2%</button>
+          <button class="btn-pct" data-pct="0.05">5%</button>
+          <button class="btn-pct" data-pct="0.10">10%</button>
+          <button class="btn-pct" data-pct="0.50">50%</button>
+          <button class="btn-pct" data-pct="1.00">100%</button>
+        </div>
+        <button id="btn-col-confirm">Confirm</button>
+        <span id="col-msg"></span>
+        <button id="btn-col-close">&#10005;</button>
+      </div>
     </div>
 
   </div>
