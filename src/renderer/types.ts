@@ -55,3 +55,31 @@ export interface OkxAdjustCollateralParams {
   collateralCcy: string;
   collateralAmt: string;
 }
+
+export interface OkxFill {
+  billId:   string;   // add — used for pagination cursor
+  tradeId:  string;
+  instId:   string;
+  side:     'buy' | 'sell';
+  fillPx:   string;
+  fillSz:   string;
+  fee:      string;
+  feeCcy:   string;
+  fillTime: string;   // add — trade execution time ms
+  ts:       string;
+}
+
+export interface AssetSummary {
+  instId:        string;
+  netPosition:   number;   // longSize - shortSize
+  longSize:      number;
+  shortSize:     number;
+  avgLongCost:   number;
+  avgShortOpen:  number;
+  currentPx:     number;
+  realizedPnl:   number;
+  unrealizedPnl: number;
+  totalPnl:      number;
+  trades:        number;
+  feesUsd:       number;   // quote-CCY fees only; base-CCY fees excluded (no price lookup here)
+}

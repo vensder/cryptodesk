@@ -25,6 +25,7 @@
     <button class="tab active" data-tab="charts">Charts</button>
     <button class="tab" data-tab="loans">OKX Loans</button>
     <button class="tab" data-tab="assets">OKX Assets</button>
+    <button class="tab" data-tab="trades">OKX Trades</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
@@ -213,6 +214,66 @@
         <span id="col-msg"></span>
         <button id="btn-col-close">&#10005;</button>
       </div>
+    </div>
+
+  </div>
+
+  <!-- OKX Trades tab -->
+  <div id="tab-trades" class="tab-content">
+
+    <div id="trades-no-keys" hidden>
+      <p>Configure OKX API keys in <button id="btn-trades-goto-settings" class="btn-link">Settings</button></p>
+    </div>
+
+    <div id="trades-main" hidden>
+
+      <div id="trades-filter-bar">
+        <span class="sort-label">Period:</span>
+        <button class="btn-sort btn-trades-range active" data-days="7">7D</button>
+        <button class="btn-sort btn-trades-range" data-days="30">30D</button>
+        <button class="btn-sort btn-trades-range" data-days="90">90D</button>
+        <span class="sort-label" style="margin-left:12px">Sort:</span>
+        <button class="btn-sort btn-trades-sort active" data-sort="totalPnl">Total P&amp;L</button>
+        <button class="btn-sort btn-trades-sort" data-sort="realizedPnl">Realized</button>
+        <button class="btn-sort btn-trades-sort" data-sort="unrealizedPnl">Unrealized</button>
+        <button class="btn-sort btn-trades-sort" data-sort="asset">Asset</button>
+        <button id="btn-refresh-trades" title="Refresh">&#8635;</button>
+        <span id="trades-count-info"></span>
+      </div>
+
+      <div id="trades-summary">
+        <div class="metric-card">
+          <span class="metric-label">Total Realized P&amp;L</span>
+          <span id="val-trades-realized" class="metric-value">--</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Total Unrealized P&amp;L</span>
+          <span id="val-trades-unrealized" class="metric-value">--</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Total Fees</span>
+          <span id="val-trades-fees" class="metric-value">--</span>
+        </div>
+      </div>
+
+      <div id="trades-table-wrap">
+        <table id="trades-table">
+          <thead>
+            <tr>
+              <th>Asset</th>
+              <th>Position</th>
+              <th>Avg Cost</th>
+              <th>Current Price</th>
+              <th>Realized P&amp;L</th>
+              <th>Unrealized P&amp;L</th>
+              <th>Total P&amp;L</th>
+              <th>Trades</th>
+            </tr>
+          </thead>
+          <tbody id="trades-tbody"></tbody>
+        </table>
+      </div>
+
     </div>
 
   </div>

@@ -1,7 +1,7 @@
 'use strict';
 
 import type * as LWC from 'lightweight-charts';
-import type { OkxLoan, OkxRiskWarning, OkxResponse, OkxFundingAsset, OkxTradingAsset } from './types';
+import type { OkxLoan, OkxRiskWarning, OkxResponse, OkxFundingAsset, OkxTradingAsset, OkxFill, AssetSummary } from './types';
 
 declare const LightweightCharts: typeof LWC;
 
@@ -509,7 +509,7 @@ function sortedLoans(loans: OkxLoan[]): OkxLoan[] {
 }
 
 function updateSortBar(): void {
-  document.querySelectorAll<HTMLButtonElement>('.btn-sort').forEach(btn => {
+  document.querySelectorAll<HTMLButtonElement>('#loans-sort-bar .btn-sort').forEach(btn => {
     const isActive = btn.dataset['key'] === loanSortKey;
     btn.classList.toggle('active', isActive);
     const label = btn.dataset['key'] === 'ltv' ? 'LTV' : 'Collateral USD';
@@ -1082,6 +1082,400 @@ function initAssets(): void {
     .addEventListener('click', () => { closeTransferPanel(); });
 }
 
+// ---- Trades tab ------------------------------------------------
+
+type TradesSortKey = 'totalPnl' | 'realizedPnl' | 'unrealizedPnl' | 'asset';
+type TradesSortDir = 'asc' | 'desc';
+
+let tradesDays:    number        = 30;
+let tradesSortKey: TradesSortKey = 'totalPnl';
+let tradesSortDir: TradesSortDir = 'desc';
+let tradesCache:   AssetSummary[] = [];
+let tradesFillCount = 0;
+
+function openChart(instId: string): void {
+  (document.getElementById('sel-exchange') as HTMLSelectElement).value = 'okx';
+  (document.getElementById('inp-symbol')   as HTMLInputElement).value  = instId.replace('/', '-');
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="charts"]')!.click();
+  void loadCandles();
+}
+
+function calcAssetSummaries(fills: OkxFill[]): Omit<AssetSummary, 'currentPx' | 'unrealizedPnl' | 'totalPnl'>[] {
+  const sorted = [...fills].sort((a, b) => parseInt(a.ts, 10) - parseInt(b.ts, 10));
+
+  interface PositionBook {
+    longSize:       number;
+    longCostBasis:  number;
+    longRealized:   number;
+    shortSize:      number;
+    shortCostBasis: number;
+    shortRealized:  number;
+    feesUsd:        number;
+    trades:         number;
+  }
+
+  const state = new Map<string, PositionBook>();
+
+  for (const fill of sorted) {
+    if (!state.has(fill.instId)) {
+      state.set(fill.instId, {
+        longSize: 0, longCostBasis: 0, longRealized: 0,
+        shortSize: 0, shortCostBasis: 0, shortRealized: 0,
+        feesUsd: 0, trades: 0,
+      });
+    }
+    const s         = state.get(fill.instId)!;
+    const px        = parseFloat(fill.fillPx);
+    const sz        = parseFloat(fill.fillSz);
+    // Only sum fees denominated in the quote CCY (e.g. USDT in POL-USDT) — directly USD-valued.
+    // Base-CCY fees (e.g. feeCcy: "POL") require a price lookup; excluded here.
+    const quoteCcy  = fill.instId.split('-').pop() ?? '';
+    if (fill.feeCcy === quoteCcy) s.feesUsd += Math.abs(parseFloat(fill.fee));
+    s.trades++;
+
+    if (fill.side === 'buy') {
+      // Close short first, then open/add long with any remainder
+      if (s.shortSize > 0) {
+        const closeSize   = Math.min(sz, s.shortSize);
+        const avgShort    = s.shortCostBasis / s.shortSize;
+        s.shortRealized  += (avgShort - px) * closeSize;
+        s.shortSize      -= closeSize;
+        s.shortCostBasis -= avgShort * closeSize;
+        if (s.shortSize < 1e-12) { s.shortSize = 0; s.shortCostBasis = 0; }
+        const rem = sz - closeSize;
+        if (rem > 1e-12) { s.longCostBasis += rem * px; s.longSize += rem; }
+      } else {
+        s.longCostBasis += sz * px;
+        s.longSize      += sz;
+      }
+    } else {
+      // Close long first, then open/add short with any remainder
+      if (s.longSize > 0) {
+        const closeSize  = Math.min(sz, s.longSize);
+        const avgLong    = s.longCostBasis / s.longSize;
+        s.longRealized  += (px - avgLong) * closeSize;
+        s.longSize      -= closeSize;
+        s.longCostBasis -= avgLong * closeSize;
+        if (s.longSize < 1e-12) { s.longSize = 0; s.longCostBasis = 0; }
+        const rem = sz - closeSize;
+        if (rem > 1e-12) { s.shortCostBasis += rem * px; s.shortSize += rem; }
+      } else {
+        s.shortCostBasis += sz * px;
+        s.shortSize      += sz;
+      }
+    }
+  }
+
+  return Array.from(state.entries()).map(([instId, s]) => ({
+    instId,
+    netPosition:  s.longSize - s.shortSize,
+    longSize:     s.longSize,
+    shortSize:    s.shortSize,
+    avgLongCost:  s.longSize  > 0 ? s.longCostBasis  / s.longSize  : 0,
+    avgShortOpen: s.shortSize > 0 ? s.shortCostBasis / s.shortSize : 0,
+    realizedPnl:  s.longRealized + s.shortRealized,
+    trades:       s.trades,
+    feesUsd:      s.feesUsd,
+  }));
+}
+
+async function fetchTicker(instId: string): Promise<number> {
+  try {
+    const res = await window.electronAPI.okxRequest('GET', '/api/v5/market/ticker', { instId });
+    if (res.ok && res.raw) {
+      const body = JSON.parse(res.raw) as { code: string; data: Array<{ last: string }> };
+      if (body.code === '0' && body.data?.[0]?.last) return parseFloat(body.data[0].last);
+    }
+  } catch { /* ignore */ }
+  return 0;
+}
+
+function fmtPnl(v: number): string {
+  const abs = Math.abs(v);
+  const s   = abs >= 1 ? abs.toFixed(2) : abs.toFixed(4);
+  return (v >= 0 ? '+' : '-') + '$' + s;
+}
+
+function fmtPx(v: number): string {
+  return v >= 1 ? v.toFixed(2) : v.toFixed(4);
+}
+
+function pnlClass(v: number): string {
+  if (v > 0)  return 'pnl-pos';
+  if (v < 0)  return 'pnl-neg';
+  return 'pnl-zero';
+}
+
+function sortedSummaries(list: AssetSummary[]): AssetSummary[] {
+  return [...list].sort((a, b) => {
+    if (tradesSortKey === 'asset') {
+      const cmp = a.instId.localeCompare(b.instId);
+      return tradesSortDir === 'asc' ? cmp : -cmp;
+    }
+    const va = a[tradesSortKey] as number;
+    const vb = b[tradesSortKey] as number;
+    return tradesSortDir === 'desc' ? vb - va : va - vb;
+  });
+}
+
+function showTradesSkeleton(): void {
+  const tbody = document.getElementById('trades-tbody') as HTMLTableSectionElement;
+  tbody.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const tr = document.createElement('tr');
+    tr.className = 'trades-skeleton';
+    for (let j = 0; j < 8; j++) {
+      const td = document.createElement('td');
+      td.textContent = '████████';
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function renderTradesTable(): void {
+  const tbody = document.getElementById('trades-tbody') as HTMLTableSectionElement;
+  tbody.innerHTML = '';
+
+  const sorted = sortedSummaries(tradesCache);
+
+  if (sorted.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 8;
+    td.style.textAlign = 'center';
+    td.style.color = 'var(--text-muted)';
+    td.style.padding = '24px';
+    td.textContent = 'No trades found for this period';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const s of sorted) {
+    const base = s.instId.split('-')[0] ?? s.instId;
+    const tr = document.createElement('tr');
+
+    const tdAsset = document.createElement('td');
+    const assetName = document.createElement('span');
+    assetName.textContent = base;
+    tdAsset.appendChild(assetName);
+    if (s.netPosition > 0) {
+      const badge = document.createElement('span');
+      badge.textContent = 'L';
+      badge.style.cssText = 'margin-left:4px;padding:0 3px;border-radius:2px;font-size:9px;font-weight:700;background:var(--green);color:#000;vertical-align:middle';
+      tdAsset.appendChild(badge);
+    } else if (s.netPosition < 0) {
+      const badge = document.createElement('span');
+      badge.textContent = 'S';
+      badge.style.cssText = 'margin-left:4px;padding:0 3px;border-radius:2px;font-size:9px;font-weight:700;background:var(--red);color:#fff;vertical-align:middle';
+      tdAsset.appendChild(badge);
+    }
+    tdAsset.addEventListener('click', () => openChart(s.instId));
+    tr.appendChild(tdAsset);
+
+    const tdPos = document.createElement('td');
+    tdPos.textContent = s.netPosition !== 0 ? fmtAmt(String(Math.abs(s.netPosition))) : '0';
+    tdPos.style.color = s.netPosition > 0 ? 'var(--text-primary)' : s.netPosition < 0 ? 'var(--red)' : 'var(--text-muted)';
+    tr.appendChild(tdPos);
+
+    const tdAvg = document.createElement('td');
+    if (s.netPosition > 0)      tdAvg.textContent = fmtPx(s.avgLongCost);
+    else if (s.netPosition < 0) tdAvg.textContent = fmtPx(s.avgShortOpen);
+    else                        tdAvg.textContent = '--';
+    tr.appendChild(tdAvg);
+
+    const tdPx = document.createElement('td');
+    tdPx.textContent = s.currentPx > 0 ? fmtPx(s.currentPx) : '--';
+    tr.appendChild(tdPx);
+
+    const tdReal = document.createElement('td');
+    tdReal.textContent = fmtPnl(s.realizedPnl);
+    tdReal.className = pnlClass(s.realizedPnl);
+    tr.appendChild(tdReal);
+
+    const tdUnreal = document.createElement('td');
+    if (s.unrealizedPnl !== 0 && s.currentPx > 0) {
+      tdUnreal.textContent = fmtPnl(s.unrealizedPnl);
+      tdUnreal.className = pnlClass(s.unrealizedPnl);
+    } else {
+      tdUnreal.textContent = '--';
+    }
+    tr.appendChild(tdUnreal);
+
+    const tdTotal = document.createElement('td');
+    tdTotal.textContent = fmtPnl(s.totalPnl);
+    tdTotal.className = pnlClass(s.totalPnl);
+    tr.appendChild(tdTotal);
+
+    const tdTrades = document.createElement('td');
+    tdTrades.textContent = String(s.trades);
+    tr.appendChild(tdTrades);
+
+    tbody.appendChild(tr);
+  }
+}
+
+function updateTradesSortBar(): void {
+  document.querySelectorAll<HTMLButtonElement>('.btn-trades-sort').forEach(btn => {
+    const key = btn.dataset['sort'] as TradesSortKey;
+    const isActive = key === tradesSortKey;
+    btn.classList.toggle('active', isActive);
+    const labels: Record<TradesSortKey, string> = { totalPnl: 'Total P&L', realizedPnl: 'Realized', unrealizedPnl: 'Unrealized', asset: 'Asset' };
+    btn.textContent = isActive ? `${labels[key]} ${tradesSortDir === 'desc' ? '↓' : '↑'}` : labels[key];
+  });
+}
+
+function updateTradesRangeBar(): void {
+  document.querySelectorAll<HTMLButtonElement>('.btn-trades-range').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset['days'] ?? '0', 10) === tradesDays);
+  });
+}
+
+function updateTradesSummary(): void {
+  const totalRealized   = tradesCache.reduce((s, a) => s + a.realizedPnl,   0);
+  const totalUnrealized = tradesCache.reduce((s, a) => s + a.unrealizedPnl, 0);
+  const totalFees       = tradesCache.reduce((s, a) => s + a.feesUsd,        0);
+
+  const realEl = document.getElementById('val-trades-realized')   as HTMLSpanElement;
+  const unrEl  = document.getElementById('val-trades-unrealized') as HTMLSpanElement;
+  const feeEl  = document.getElementById('val-trades-fees')       as HTMLSpanElement;
+
+  realEl.textContent = fmtPnl(totalRealized);
+  realEl.className   = 'metric-value ' + pnlClass(totalRealized);
+  unrEl.textContent  = fmtPnl(totalUnrealized);
+  unrEl.className    = 'metric-value ' + pnlClass(totalUnrealized);
+  feeEl.textContent  = '-$' + totalFees.toFixed(2);
+  feeEl.className    = 'metric-value pnl-neg';
+}
+
+async function fetchTrades(): Promise<void> {
+  let hasKeys = false;
+  try {
+    const [k, s, p] = await Promise.all([
+      window.electronAPI.getApiKey('okx-key'),
+      window.electronAPI.getApiKey('okx-secret'),
+      window.electronAPI.getApiKey('okx-passphrase'),
+    ]);
+    hasKeys = !!(k && s && p);
+  } catch { /* keytar unavailable */ }
+
+  const noKeysEl = document.getElementById('trades-no-keys') as HTMLDivElement;
+  const mainEl   = document.getElementById('trades-main')    as HTMLDivElement;
+
+  if (!hasKeys) {
+    noKeysEl.hidden = false;
+    mainEl.hidden   = true;
+    return;
+  }
+
+  noKeysEl.hidden = true;
+  mainEl.hidden   = false;
+
+  showTradesSkeleton();
+  (document.getElementById('trades-count-info') as HTMLSpanElement).textContent = 'Loading…';
+
+  const now   = Date.now();
+  const begin = now - tradesDays * 24 * 60 * 60 * 1000;
+  const end   = now;
+  const allFills: OkxFill[] = [];
+  let after: string | undefined;
+  const MAX_PAGES = 10;
+
+  try {
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const params: Record<string, string> = {
+        instType: 'SPOT',
+        begin:    String(begin),
+        end:      String(end),
+        limit:    '100',
+      };
+      if (after) params['after'] = after;
+
+      const res = await window.electronAPI.okxRequest('GET', '/api/v5/trade/fills-history', params);
+      if (!res.ok) break;
+      const body = JSON.parse(res.raw) as { code: string; data: OkxFill[] };
+      if (page === 0 && body.data.length > 0) {
+        console.log('[trades] sample fill:', JSON.stringify(body.data[0]));
+        console.log('[trades] last fill:', JSON.stringify(body.data[body.data.length - 1]));
+      }
+      if (body.code !== '0') break;
+      const page_fills = body.data ?? [];
+      console.log(`[trades] page ${page}: got ${page_fills.length} fills, last tradeId: ${page_fills[page_fills.length - 1]?.tradeId}, last ts: ${page_fills[page_fills.length - 1]?.ts}`);
+      allFills.push(...page_fills);
+      if (page_fills.length < 100) break;
+      after = page_fills[page_fills.length - 1]!.billId;
+    }
+  } catch (err) {
+    console.error('fetchTrades error:', err);
+  }
+
+  tradesFillCount = allFills.length;
+
+  const partials = calcAssetSummaries(allFills);
+
+  const tickers = await Promise.all(partials.map(p => fetchTicker(p.instId)));
+
+  tradesCache = partials.map((p, i) => {
+    const currentPx      = tickers[i] ?? 0;
+    const longUnrealized  = p.longSize  > 0 && currentPx > 0 ? (currentPx - p.avgLongCost)  * p.longSize  : 0;
+    const shortUnrealized = p.shortSize > 0 && currentPx > 0 ? (p.avgShortOpen - currentPx) * p.shortSize : 0;
+    const unrealizedPnl  = longUnrealized + shortUnrealized;
+    return {
+      ...p,
+      currentPx,
+      unrealizedPnl,
+      totalPnl: p.realizedPnl + unrealizedPnl,
+    };
+  });
+
+  const assetCount = tradesCache.length;
+  (document.getElementById('trades-count-info') as HTMLSpanElement).textContent =
+    `${tradesFillCount} fills · ${assetCount} assets`;
+
+  updateTradesSummary();
+  renderTradesTable();
+}
+
+function initTrades(): void {
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="trades"]')!
+    .addEventListener('click', () => { void fetchTrades(); });
+
+  document.getElementById('trades-filter-bar')!
+    .addEventListener('click', (e) => {
+      const rangeBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.btn-trades-range');
+      if (rangeBtn) {
+        tradesDays = parseInt(rangeBtn.dataset['days'] ?? '30', 10);
+        updateTradesRangeBar();
+        void fetchTrades();
+        return;
+      }
+      const sortBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.btn-trades-sort');
+      if (sortBtn) {
+        const key = sortBtn.dataset['sort'] as TradesSortKey;
+        if (key === tradesSortKey) {
+          tradesSortDir = tradesSortDir === 'desc' ? 'asc' : 'desc';
+        } else {
+          tradesSortKey = key;
+          tradesSortDir = key === 'asset' ? 'asc' : 'desc';
+        }
+        updateTradesSortBar();
+        renderTradesTable();
+      }
+    });
+
+  document.getElementById('btn-refresh-trades')!
+    .addEventListener('click', () => { void fetchTrades(); });
+
+  document.getElementById('btn-trades-goto-settings')!
+    .addEventListener('click', () => {
+      document.querySelector<HTMLButtonElement>('.tab[data-tab="settings"]')!.click();
+    });
+
+  updateTradesSortBar();
+  updateTradesRangeBar();
+}
+
 // ---- CMC market indicators -------------------------------------
 
 function fgColor(v: number): string {
@@ -1247,6 +1641,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initLoans();
   initCollateralPanel();
   initAssets();
+  initTrades();
 
   document.getElementById('btn-load')!.addEventListener('click', () => { void loadCandles(); });
   (document.getElementById('inp-symbol') as HTMLInputElement).addEventListener('keydown', e => {
